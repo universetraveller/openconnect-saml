@@ -62,6 +62,7 @@ both override the XDG default for one invocation.
 --headless                 No browser, terminal-only authentication
 --browser BACKEND          qt | chrome | headless
 --browser-display-mode M   shown | hidden
+--chrome-user-data-dir P   Dedicated persistent Chrome profile (cookies/extensions)
 --chrome-channel CHANNEL   With --browser=chrome, use a system Chrome / Edge
                            instead of Playwright's bundled Chromium.
                            Values: chrome | chrome-beta | chrome-dev | chrome-canary |
@@ -75,6 +76,11 @@ both override the XDG default for one invocation.
 
 ```
 -u, --user NAME            Authenticate as the given user
+--username-only            Fill username; let the browser handle password and MFA
+--preserve-session-on-interrupt  Ctrl-C sends SIGHUP without logout (macOS/Linux)
+--no-preserve-session-on-interrupt  Override the saved Ctrl-C preservation policy
+--no-token-cache           Skip saved VPN session cookie reads and writes
+--forget-token             Delete this account/gateway's cached cookie and log in again
 --reset-credentials        Delete saved credentials from keyring and exit
 --auth-only                Friendly alias for --authenticate shell (auth, print cookie, exit)
 --auth-script PATH         External authentication script (replaces the built-in
@@ -172,6 +178,8 @@ your phone authenticator than persist a secret on the machine.
 openconnect-saml disconnect [PROFILE]    # stop one session
 openconnect-saml disconnect --all        # stop every active session
 openconnect-saml disconnect              # equivalent to --all when no profile
+openconnect-saml disconnect PROFILE --preserve-session  # SIGHUP; retain server session
+openconnect-saml disconnect PROFILE --logout            # override saved preservation policy
 ```
 
 ## `sessions` subcommand
@@ -282,6 +290,7 @@ openconnect-saml groups disconnect NAME
 openconnect-saml disconnect [PROFILE]    # stop one session
 openconnect-saml disconnect --all        # stop every active session
 openconnect-saml sessions list [--json]
+openconnect-saml disconnect PROFILE --preserve-session  # macOS/Linux; no logout
 ```
 
 ## `run` subcommand

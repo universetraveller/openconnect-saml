@@ -118,6 +118,33 @@ def _add_connection_args(parser):
         metavar="PATH",
         default=None,
     )
+    parser.add_argument(
+        "--chrome-user-data-dir",
+        metavar="PATH",
+        default=None,
+        help="Keep Chrome cookies, storage and extensions in a dedicated persistent profile.",
+    )
+    parser.add_argument(
+        "--no-token-cache",
+        action="store_true",
+        help="Skip reading and writing saved VPN session cookies.",
+    )
+    parser.add_argument(
+        "--forget-token",
+        action="store_true",
+        help="Delete this account/gateway's saved VPN session and authenticate again.",
+    )
+    parser.add_argument(
+        "--username-only",
+        action="store_true",
+        help="Fill --user without prompting for a password or TOTP; log in in the browser.",
+    )
+    parser.add_argument(
+        "--preserve-session-on-interrupt",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Use SIGHUP on Ctrl-C to retain the VPN session (macOS/Linux). Overrides config.",
+    )
     parser.add_argument("--on-connect", help="Command to run after VPN connects", default="")
     parser.add_argument("--on-disconnect", help="Command to run when disconnecting", default="")
     parser.add_argument(
@@ -635,6 +662,19 @@ def create_argparser():
     )
     disconnect_parser.add_argument(
         "--all", action="store_true", default=False, help="Disconnect every active session"
+    )
+    disconnect_mode = disconnect_parser.add_mutually_exclusive_group()
+    disconnect_mode.add_argument(
+        "--preserve-session",
+        action="store_true",
+        default=None,
+        help="Disconnect with SIGHUP without logging out, allowing cookie reuse (macOS/Linux).",
+    )
+    disconnect_mode.add_argument(
+        "--logout",
+        dest="preserve_session",
+        action="store_false",
+        help="Log out on disconnect, overriding preserve_session in config.",
     )
 
     # sessions
@@ -1165,10 +1205,31 @@ def _handle_groups_command(args):
 
 
 def _handle_disconnect_command(args):
-    from openconnect_saml.sessions import kill, list_active
+    from openconnect_saml.sessions import kill, list_active, load
 
     profile = getattr(args, "profile_name", None)
     do_all = getattr(args, "all", False)
+    override = getattr(args, "preserve_session", None)
+    cfg = config.load()
+
+    def stop(name, session=None):
+        preserve = override
+        if preserve is None:
+            session = session or load(name)
+            preserve = (
+                session.preserve_session
+                if session is not None and session.preserve_session is not None
+                else cfg.get_setting("preserve_session", name)
+            )
+        if preserve:
+            import signal
+
+            if not hasattr(signal, "SIGHUP"):
+                print(
+                    "Session preservation requires SIGHUP support (macOS/Linux).", file=sys.stderr
+                )
+                return False
+        return kill(name, **({"preserve_session": True} if preserve else {}))
 
     if do_all or not profile:
         sessions = list_active()
@@ -1177,12 +1238,12 @@ def _handle_disconnect_command(args):
             return 0
         ok = 0
         for sess in sessions:
-            if kill(sess.profile):
+            if stop(sess.profile, sess):
                 print(f"Disconnected '{sess.profile}' (pid {sess.pid})")
                 ok += 1
         return 0 if ok else 1
 
-    if kill(profile):
+    if stop(profile):
         print(f"Disconnected '{profile}'.")
         return 0
     import difflib

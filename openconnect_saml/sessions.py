@@ -62,6 +62,7 @@ class Session:
     parent_pid: int = 0
     interface: str = ""
     started_at: str = field(default_factory=lambda: datetime.now(tz=timezone.utc).isoformat())
+    preserve_session: bool | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> Session:
@@ -72,6 +73,9 @@ class Session:
             pid=int(d.get("pid", 0)),
             parent_pid=int(d.get("parent_pid", 0)),
             interface=str(d.get("interface", "")),
+            preserve_session=(
+                d.get("preserve_session") if isinstance(d.get("preserve_session"), bool) else None
+            ),
             started_at=str(d.get("started_at", "")),
         )
 
@@ -158,17 +162,24 @@ def remove(profile: str) -> bool:
     return False
 
 
-def kill(profile: str, *, timeout: float = 10.0) -> bool:
-    """Send SIGTERM to the recorded openconnect process for ``profile``.
+def kill(profile: str, *, timeout: float = 10.0, preserve_session: bool = False) -> bool:
+    """Stop the recorded OpenConnect process, optionally retaining its session.
 
-    Waits up to ``timeout`` seconds for it to exit (then SIGKILL). Returns
-    True if a process was found and signalled, False if no live record.
+    SIGTERM logs out; SIGHUP disconnects without logging out. Session
+    preservation requires SIGHUP support and remains subject to server expiry.
+    Waits up to ``timeout`` seconds for exit. Ordinary stops then escalate to
+    SIGKILL; preservation never forces a kill so network cleanup can finish.
     """
+    stop_signal = signal.SIGTERM
+    if preserve_session:
+        stop_signal = getattr(signal, "SIGHUP", None)
+        if stop_signal is None:
+            raise ValueError("Session preservation requires SIGHUP support")
     sess = load(profile)
     if not sess:
         return False
     try:
-        os.kill(sess.pid, signal.SIGTERM)
+        os.kill(sess.pid, stop_signal)
     except (ProcessLookupError, PermissionError):
         remove(profile)
         return False
@@ -178,6 +189,9 @@ def kill(profile: str, *, timeout: float = 10.0) -> bool:
         time.sleep(0.1)
 
     if _pid_alive(sess.pid):
+        if preserve_session:
+            logger.warning("OpenConnect has not finished disconnecting", profile=profile)
+            return False
         # Still alive — escalate to SIGKILL on POSIX. On Windows ``signal``
         # has no ``SIGKILL`` and ``os.kill(pid, SIGTERM)`` is already an
         # unconditional ``TerminateProcess``, so the escalation step is a

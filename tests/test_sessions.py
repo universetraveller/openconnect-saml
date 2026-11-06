@@ -126,3 +126,35 @@ class TestKill:
         assert signals_sent[0][0] == os.getpid()
         # Record should be cleaned up
         assert not sessions.session_file("work").exists()
+
+
+@pytest.mark.skipif(not hasattr(__import__("signal"), "SIGHUP"), reason="Requires SIGHUP")
+def test_preserve_session_uses_sighup_instead_of_logging_out(tmp_state_home, monkeypatch):
+    import signal
+
+    sessions.record(_make(pid=os.getpid()))
+    sent = []
+
+    def fake_kill(pid, sig):
+        if sig == 0:
+            if sent:
+                raise ProcessLookupError
+        else:
+            sent.append(sig)
+
+    monkeypatch.setattr(sessions.os, "kill", fake_kill)
+    assert sessions.kill("work", preserve_session=True)
+    assert sent == [signal.SIGHUP]
+    assert not sessions.session_file("work").exists()
+
+
+@pytest.mark.skipif(not hasattr(__import__("signal"), "SIGHUP"), reason="Requires SIGHUP")
+def test_preserve_session_does_not_force_kill_on_timeout(tmp_state_home, monkeypatch):
+    import signal
+
+    sessions.record(_make(pid=os.getpid()))
+    sent = []
+    monkeypatch.setattr(sessions.os, "kill", lambda pid, sig: sent.append(sig) if sig else None)
+    assert not sessions.kill("work", preserve_session=True, timeout=0)
+    assert sent == [signal.SIGHUP]
+    assert sessions.session_file("work").exists()

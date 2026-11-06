@@ -328,3 +328,11 @@ class TestGroupsUnknownAction:
 
 # pytest is needed for parametrize markers if any; keep the import live.
 _ = pytest
+
+
+@pytest.mark.skipif(not hasattr(__import__("signal"), "SIGHUP"), reason="Requires SIGHUP")
+def test_disconnect_preserve_session_passes_option():
+    options = SimpleNamespace(profile_name="work", all=False, preserve_session=True)
+    with patch("openconnect_saml.sessions.kill", return_value=True) as stop:
+        assert _handle_disconnect_command(options) == 0
+    stop.assert_called_once_with("work", preserve_session=True)

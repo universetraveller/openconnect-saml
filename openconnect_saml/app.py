@@ -9,13 +9,14 @@ import signal
 import subprocess  # nosec
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import structlog
 from prompt_toolkit import HTML
 from prompt_toolkit.shortcuts import radiolist_dialog
 from requests.exceptions import HTTPError, SSLError
 
-from openconnect_saml import config
+from openconnect_saml import config, token_cache
 from openconnect_saml.authenticator import (
     CHROME_MODE,
     HEADLESS_MODE,
@@ -196,21 +197,7 @@ def run(args):
         tracker.start()
 
     detach = getattr(args, "detach", False)
-    session_username = args.user or (cfg.credentials.username if cfg.credentials else "")
     session_profile_name = profile_name or "default"
-
-    def _record_pid(pid):
-        from openconnect_saml.sessions import Session, record
-
-        record(
-            Session(
-                profile=session_profile_name,
-                server=selected_profile.vpn_url,
-                user=session_username,
-                pid=pid,
-                parent_pid=os.getpid(),
-            )
-        )
 
     cert = getattr(args, "cert", None)
     cert_key = getattr(args, "cert_key", None)
@@ -219,12 +206,11 @@ def run(args):
         cert_key = cert_key or profile.cert_key
 
     try:
-        rc = run_openconnect(
+        rc = _connect_with_token_refresh(
+            args,
+            cfg,
             auth_response,
             selected_profile,
-            args.proxy,
-            args.ac_version,
-            args.openconnect_args,
             no_sudo=getattr(args, "no_sudo", False),
             csd_wrapper=getattr(args, "csd_wrapper", None),
             on_connect=cfg.on_connect,
@@ -232,7 +218,6 @@ def run(args):
             no_routes=no_routes,
             useragent=getattr(args, "useragent", None),
             detach=detach,
-            on_pid=_record_pid,
             cert=cert,
             cert_key=cert_key,
             wait_seconds=getattr(args, "wait_seconds", 0),
@@ -265,6 +250,65 @@ def run(args):
             except Exception as exc:
                 logger.warning("Could not disable kill-switch on exit", error=str(exc))
         handle_disconnect(cfg.on_disconnect)
+
+
+def _connect_with_token_refresh(args, cfg, auth_response, selected_profile, **kwargs):
+    def connect(response, host):
+        options = dict(kwargs)
+        profile_name = getattr(args, "profile_name", None)
+        profile = cfg.get_profile(profile_name) if profile_name else None
+        extra_args = args.openconnect_args or (profile.openconnect_args if profile else [])
+        preserve_interrupt = getattr(args, "preserve_session_on_interrupt", None)
+        if preserve_interrupt is None:
+            preserve_interrupt = cfg.get_setting(
+                "preserve_session_on_interrupt", getattr(args, "profile_name", None)
+            )
+        options.setdefault("preserve_session_on_interrupt", preserve_interrupt)
+        options.setdefault("on_pid", lambda pid: _record_session(args, cfg, host, pid))
+        return run_openconnect(response, host, args.proxy, args.ac_version, extra_args, **options)
+
+    rc = connect(auth_response, selected_profile)
+    # OpenConnect maps -EPERM (cookie rejected by server) to exit status 2.
+    # Network, certificate and local setup errors should not trigger SSO.
+    if rc != 2:
+        return rc
+    key = getattr(args, "_token_cache_key", None)
+    if key:
+        token_cache.delete(key)
+    if not getattr(args, "_using_cached_token", False):
+        return rc
+    logger.info("Saved VPN session rejected; refreshing SSO authentication")
+    try:
+        response, host = asyncio.run(
+            _run(args, cfg, force_auth=True, profile_override=getattr(args, "_auth_profile", None))
+        )
+        config.save(cfg)
+    except KeyboardInterrupt:
+        raise
+    except Exception as exc:
+        logger.error("Could not refresh VPN authentication", error=type(exc).__name__)
+        return 2
+    rc = connect(response, host)
+    if rc == 2 and getattr(args, "_token_cache_key", None):
+        token_cache.delete(args._token_cache_key)
+    return rc
+
+
+def _record_session(args, cfg, host, pid):
+    from openconnect_saml.sessions import Session, record
+
+    profile_name = getattr(args, "profile_name", None)
+    record(
+        Session(
+            profile=profile_name or "default",
+            server=host.vpn_url,
+            user=getattr(args, "user", None)
+            or (cfg.credentials.username if cfg.credentials else ""),
+            pid=pid,
+            parent_pid=os.getpid(),
+            preserve_session=cfg.get_setting("preserve_session", profile_name),
+        )
+    )
 
 
 def _setup_killswitch(args, cfg, selected_profile):
@@ -348,12 +392,11 @@ def _run_with_reconnect(
     try:
         while True:
             try:
-                rc = run_openconnect(
+                rc = _connect_with_token_refresh(
+                    args,
+                    cfg,
                     auth_response,
                     selected_profile,
-                    args.proxy,
-                    args.ac_version,
-                    args.openconnect_args,
                     no_sudo=getattr(args, "no_sudo", False),
                     csd_wrapper=getattr(args, "csd_wrapper", None),
                     on_connect=cfg.on_connect,
@@ -601,7 +644,7 @@ def configure_totp_provider(args, cfg, credentials) -> None:
         logger.info("Using 2FAuth TOTP provider")
 
 
-async def _run(args, cfg):
+async def _run(args, cfg, *, force_auth=False, profile_override=None):
     # Handle --reset-credentials
     if getattr(args, "reset_credentials", False):
         if args.user:
@@ -614,49 +657,19 @@ async def _run(args, cfg):
         raise ValueError("Credentials reset complete", 0)
 
     credentials = None
-    if cfg.credentials:
-        credentials = cfg.credentials
-    elif args.user:
+    username_only = getattr(args, "username_only", False) or cfg.get_setting(
+        "username_only", getattr(args, "profile_name", None)
+    )
+    if args.user and (not cfg.credentials or args.user != cfg.credentials.username):
         credentials = Credentials(args.user)
+    elif cfg.credentials:
+        credentials = cfg.credentials
 
-    if credentials and not credentials.password:
-        credentials.password = _read_password(prompt=f"Password ({args.user}): ")
-        cfg.credentials = credentials
-
-    configure_totp_provider(args, cfg, credentials)
-    totp_source = resolve_totp_source(args, credentials)
-
-    # Catch-all: if no provider was configured and no TOTP secret is on file,
-    # ask for one (unless the user explicitly opted out via "none"). When the
-    # user responds with empty input, treat that as opting out so we don't
-    # prompt again on every reconnect / next run (#TOTP-loop).
-    if (
-        credentials
-        and totp_source
-        not in ("none", "bitwarden", "1password", "pass", "2fauth", "keepassxc", "prompt")
-        and not credentials.totp
-    ):
-        entered = _read_password(
-            prompt=f"TOTP secret (leave blank if not required) ({args.user}): "
+    if profile_override is not None:
+        selected_profile = config.HostProfile(
+            profile_override.address, profile_override.user_group, profile_override.name
         )
-        if entered.strip():
-            credentials.totp = entered.strip()
-        else:
-            # Persist the opt-out so subsequent runs / reconnect cycles don't
-            # re-ask. Also clear any stale / corrupt secret previously stored
-            # in the keyring.
-            logger.info(
-                "Empty TOTP entered — disabling TOTP prompts for this account "
-                "(set --totp-source local manually to re-enable)."
-            )
-            try:
-                del credentials.totp
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("Could not clear stale TOTP from keyring", error=str(exc))
-            credentials.totp_source = "none"
-        cfg.credentials = credentials
-
-    if cfg.default_profile and not (args.use_profile_selector or args.server):
+    elif cfg.default_profile and not (args.use_profile_selector or args.server):
         selected_profile = cfg.default_profile
     elif args.use_profile_selector or args.profile_path:
         profiles = get_profiles(Path(args.profile_path))
@@ -673,6 +686,7 @@ async def _run(args, cfg):
     cfg.default_profile = config.HostProfile(
         selected_profile.address, selected_profile.user_group, selected_profile.name
     )
+    args._auth_profile = cfg.default_profile
 
     # Browser backend: CLI > per-profile > Qt default
     browser_backend = getattr(args, "browser", None)
@@ -737,25 +751,109 @@ async def _run(args, cfg):
                 profile=getattr(args, "profile_name", None),
             )
 
-    auth_response = await authenticate_to(
-        selected_profile,
-        args.proxy,
-        credentials,
-        display_mode,
-        args.ac_version,
-        ssl_legacy=ssl_legacy,
-        timeout=timeout,
-        window_width=cfg.window_width,
-        window_height=cfg.window_height,
-        verify_tls=not no_cert_check,
-        allowed_hosts=allowed_hosts,
-        auth_script=auth_script,
-        chrome_channel=getattr(args, "chrome_channel", None),
-        chrome_executable=getattr(args, "chrome_executable", None),
-    )
-
     if credentials:
-        credentials.save()
+        cfg.credentials = credentials
+    key = token_cache.cache_key(
+        selected_profile,
+        credentials.username if credentials else "",
+        getattr(args, "profile_name", None),
+    )
+    cache_enabled = cfg.token_cache and not getattr(args, "no_token_cache", False)
+    args._token_cache_key = key if cache_enabled else None
+    if getattr(args, "forget_token", False):
+        token_cache.delete(key)
+    ks_config = (
+        profile_for_browser.kill_switch if profile_for_browser else None
+    ) or cfg.kill_switch
+    killswitch_enabled = getattr(args, "kill_switch", False) or (
+        ks_config is not None and ks_config.enabled
+    )
+    # Auth-only must return a freshly authenticated cookie. Detached mode
+    # cannot observe a later cookie rejection from the background process.
+    # A kill-switch would block the IdP/Duo during a later SSO refresh, so
+    # complete fresh authentication before the firewall is installed.
+    reuse = cache_enabled and not (
+        force_auth
+        or getattr(args, "forget_token", False)
+        or getattr(args, "authenticate", False)
+        or getattr(args, "detach", False)
+        or killswitch_enabled
+    )
+    saved_session = token_cache.load(key) if reuse else None
+    args._using_cached_token = saved_session is not None
+    if saved_session is not None:
+        auth_response = saved_session.response
+        selected_profile.address = saved_session.vpn_url
+        logger.info("Trying saved VPN session")
+    else:
+        if credentials and not username_only and not credentials.password:
+            credentials.password = _read_password(prompt=f"Password ({args.user}): ")
+            cfg.credentials = credentials
+
+        if not username_only:
+            configure_totp_provider(args, cfg, credentials)
+        totp_source = resolve_totp_source(args, credentials)
+
+        # Catch-all: if no provider was configured and no TOTP secret is on file,
+        # ask for one (unless the user explicitly opted out via "none"). When the
+        # user responds with empty input, treat that as opting out so we don't
+        # prompt again on every reconnect / next run (#TOTP-loop).
+        if (
+            credentials
+            and not username_only
+            and totp_source
+            not in ("none", "bitwarden", "1password", "pass", "2fauth", "keepassxc", "prompt")
+            and not credentials.totp
+        ):
+            entered = _read_password(
+                prompt=f"TOTP secret (leave blank if not required) ({args.user}): "
+            )
+            if entered.strip():
+                credentials.totp = entered.strip()
+            else:
+                # Persist the opt-out so subsequent runs / reconnect cycles don't
+                # re-ask. Also clear any stale / corrupt secret previously stored
+                # in the keyring.
+                logger.info(
+                    "Empty TOTP entered — disabling TOTP prompts for this account "
+                    "(set --totp-source local manually to re-enable)."
+                )
+                try:
+                    del credentials.totp
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("Could not clear stale TOTP from keyring", error=str(exc))
+                credentials.totp_source = "none"
+            cfg.credentials = credentials
+
+        browser_credentials = credentials
+        if credentials and username_only:
+            browser_credentials = SimpleNamespace(
+                username=credentials.username, password=None, totp=None, username_only=True
+            )
+        auth_response = await authenticate_to(
+            selected_profile,
+            args.proxy,
+            browser_credentials,
+            display_mode,
+            args.ac_version,
+            ssl_legacy=ssl_legacy,
+            timeout=timeout,
+            window_width=cfg.window_width,
+            window_height=cfg.window_height,
+            verify_tls=not no_cert_check,
+            allowed_hosts=allowed_hosts,
+            auth_script=auth_script,
+            chrome_channel=getattr(args, "chrome_channel", None) or cfg.chrome_channel,
+            chrome_executable=getattr(args, "chrome_executable", None),
+            chrome_user_data_dir=getattr(args, "chrome_user_data_dir", None)
+            or cfg.chrome_user_data_dir,
+        )
+
+        if credentials and not username_only:
+            credentials.save()
+
+        if cache_enabled:
+            token_cache.save(key, auth_response, selected_profile)
 
     # on_connect / on_disconnect: CLI > per-profile > top-level config.
     profile_for_hooks = profile_for_browser
@@ -806,6 +904,7 @@ def authenticate_to(
     auth_script=None,
     chrome_channel=None,
     chrome_executable=None,
+    chrome_user_data_dir=None,
 ):
     logger.info("Authenticating to VPN endpoint", name=host.name, address=host.address)
     return Authenticator(
@@ -822,6 +921,7 @@ def authenticate_to(
         auth_script=auth_script,
         chrome_channel=chrome_channel,
         chrome_executable=chrome_executable,
+        chrome_user_data_dir=chrome_user_data_dir,
     ).authenticate(display_mode)
 
 
@@ -870,6 +970,7 @@ def run_openconnect(
     cert_key=None,
     wait_seconds=0,
     no_cert_check=False,
+    preserve_session_on_interrupt=False,
 ):
     """Spawn the openconnect process.
 
@@ -885,6 +986,10 @@ def run_openconnect(
         session in ``sessions.py`` so other commands can find it.
     """
     superuser_cmd = None
+    preserve_interrupt = preserve_session_on_interrupt and not detach
+    if preserve_interrupt and not hasattr(signal, "SIGHUP"):
+        logger.error("Ctrl-C session preservation requires SIGHUP support (macOS/Linux)")
+        return 20
 
     if os.name == "nt":
         import ctypes
@@ -893,10 +998,13 @@ def run_openconnect(
             logger.error("OpenConnect must be run as Administrator on Windows, exiting")
             return 20
     elif not no_sudo:
-        superuser_cmd = next((prog for prog in ("doas", "sudo") if shutil.which(prog)), None)
+        programs = ("sudo",) if preserve_interrupt else ("doas", "sudo")
+        superuser_cmd = next((prog for prog in programs if shutil.which(prog)), None)
         if not superuser_cmd:
             logger.error(
-                "Cannot find suitable program to execute as superuser (doas/sudo), exiting"
+                "Ctrl-C preservation requires sudo or --no-sudo"
+                if preserve_interrupt
+                else "Cannot find suitable program to execute as superuser (doas/sudo), exiting"
             )
             return 20
 
@@ -954,6 +1062,23 @@ def run_openconnect(
     # used above for "no superuser program found"). Mocked subprocess in
     # tests never raises this, so behaviour there is unchanged.
     try:
+        if preserve_interrupt:
+            from openconnect_saml.process_control import run_preserving_interrupt
+
+            if superuser_cmd:
+                # Authenticate while still in the foreground, before the child
+                # moves to a separate group. Never leave sudo waiting for input
+                # in a background process group.
+                rc = subprocess.run([superuser_cmd, "-v"]).returncode  # nosec
+                if rc:
+                    return rc
+                command_line.insert(1, "-n")
+            return run_preserving_interrupt(
+                command_line,
+                session_token,
+                on_pid=on_pid,
+                on_connect=(lambda: handle_connect(on_connect)) if on_connect else None,
+            )
         if detach:
             # Detach from the controlling terminal so the openconnect process
             # survives when openconnect-saml exits.

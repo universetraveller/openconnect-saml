@@ -94,6 +94,7 @@ class TestChromeBrowser:
 
             mock_chromium = MagicMock()
             mock_chromium.launch = AsyncMock()
+            mock_chromium.launch.return_value.new_context.return_value.new_page.return_value.set_default_timeout = MagicMock()
             mock_pw = MagicMock()
             mock_pw.chromium = mock_chromium
             mock_pw.stop = AsyncMock()
@@ -121,6 +122,7 @@ class TestChromeBrowser:
 
             mock_chromium = MagicMock()
             mock_chromium.launch = AsyncMock()
+            mock_chromium.launch.return_value.new_context.return_value.new_page.return_value.set_default_timeout = MagicMock()
             mock_pw = MagicMock()
             mock_pw.chromium = mock_chromium
             mock_pw.stop = AsyncMock()
@@ -157,6 +159,7 @@ class TestChromeBrowser:
 
             mock_chromium = MagicMock()
             mock_chromium.launch = AsyncMock()
+            mock_chromium.launch.return_value.new_context.return_value.new_page.return_value.set_default_timeout = MagicMock()
             mock_pw = MagicMock()
             mock_pw.chromium = mock_chromium
             mock_pw.stop = AsyncMock()
@@ -185,6 +188,7 @@ class TestChromeBrowser:
 
             mock_chromium = MagicMock()
             mock_chromium.launch = AsyncMock()
+            mock_chromium.launch.return_value.new_context.return_value.new_page.return_value.set_default_timeout = MagicMock()
             mock_pw = MagicMock()
             mock_pw.chromium = mock_chromium
             mock_pw.stop = AsyncMock()
@@ -307,6 +311,7 @@ class TestChromeBrowserIntegration:
             ]
         )
         context.new_page = AsyncMock(return_value=page)
+        context.cookies.side_effect = [[], context.cookies.return_value]
 
         browser._page = page
         browser._context = context
@@ -343,3 +348,112 @@ class TestChromeBrowserIntegration:
             assert "token" in cookies
 
         asyncio.run(_test())
+
+
+@_skip_no_playwright
+@pytest.mark.asyncio
+async def test_persistent_profile_keeps_extensions_and_closes_context(tmp_path):
+    from openconnect_saml.browser.chrome import ChromeBrowser
+
+    page = MagicMock()
+    context = AsyncMock()
+    context.pages = [page]
+    driver = MagicMock()
+    driver.chromium.launch_persistent_context = AsyncMock(return_value=context)
+    driver.chromium.launch = AsyncMock()
+    driver.stop = AsyncMock()
+    starter = MagicMock()
+    starter.start = AsyncMock(return_value=driver)
+    profile = tmp_path / "vpn-profile"
+    with patch("playwright.async_api.async_playwright", return_value=starter):
+        async with ChromeBrowser(user_data_dir=str(profile), channel="chrome", headless=False):
+            assert profile.is_dir()
+    driver.chromium.launch.assert_not_awaited()
+    launch = driver.chromium.launch_persistent_context.call_args
+    assert launch.args == (str(profile.resolve()),)
+    assert launch.kwargs["channel"] == "chrome"
+    assert set(launch.kwargs["ignore_default_args"]) == {
+        "--disable-extensions",
+        "--use-mock-keychain",
+        "--password-store=basic",
+    }
+    context.new_page.assert_not_awaited()
+    context.close.assert_awaited_once()
+    driver.stop.assert_awaited_once()
+
+
+@_skip_no_playwright
+@pytest.mark.asyncio
+async def test_profile_launch_failure_stops_driver(tmp_path):
+    from openconnect_saml.browser.chrome import ChromeBrowser
+
+    driver = MagicMock()
+    driver.chromium.launch_persistent_context = AsyncMock(
+        side_effect=RuntimeError("profile locked")
+    )
+    driver.stop = AsyncMock()
+    starter = MagicMock()
+    starter.start = AsyncMock(return_value=driver)
+    with (
+        patch("playwright.async_api.async_playwright", return_value=starter),
+        pytest.raises(RuntimeError, match="profile locked"),
+    ):
+        await ChromeBrowser(user_data_dir=str(tmp_path)).spawn()
+    driver.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_saved_sso_completion_cookie_is_cleared_before_new_login():
+    from openconnect_saml.browser.chrome import ChromeBrowser
+
+    browser = ChromeBrowser()
+    page = MagicMock()
+    page.url = "https://vpn.example.com/final"
+    page.goto = AsyncMock()
+    context = AsyncMock()
+    old = {"name": "sso", "value": "old", "domain": "vpn.example.com", "path": "/"}
+    fresh = {**old, "value": "fresh"}
+    context.cookies.side_effect = [[old], [fresh]]
+    browser._page, browser._context = page, context
+    await browser.authenticate_at(
+        "https://vpn.example.com/login", final_url=page.url, token_cookie_name="sso"
+    )
+    context.clear_cookies.assert_awaited_once_with(name="sso", domain="vpn.example.com", path="/")
+    assert all(call.args == (page.url,) for call in context.cookies.call_args_list)
+    assert browser.cookies == {"sso": "fresh"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("username_only", [False, True])
+async def test_final_url_waits_for_fresh_cookie_and_username_only_leaves_submission_manual(
+    username_only,
+):
+    from types import SimpleNamespace
+
+    from openconnect_saml.browser.chrome import ChromeBrowser
+
+    browser = ChromeBrowser()
+    page = MagicMock()
+    page.url = "https://vpn.example.com/final"
+    page.goto = AsyncMock()
+    page.wait_for_load_state = AsyncMock()
+    page.wait_for_url = AsyncMock()
+    context = AsyncMock()
+    context.cookies.side_effect = [[], [], [{"name": "sso", "value": "fresh"}]]
+    browser._page, browser._context = page, context
+    browser._auto_fill = AsyncMock(return_value=True)
+    browser._detect_mfa_challenge = AsyncMock()
+    browser._try_click_selectors = AsyncMock()
+    credentials = SimpleNamespace(username_only=username_only)
+    with patch("openconnect_saml.browser.chrome.asyncio.sleep", new_callable=AsyncMock):
+        cookies = await browser.authenticate_at(
+            "https://vpn.example.com/login",
+            credentials=credentials,
+            final_url=page.url,
+            token_cookie_name="sso",
+        )
+    assert cookies == {"sso": "fresh"}
+    selectors = browser._try_click_selectors.call_args.args[0]
+    assert bool(selectors) is not username_only
+    context.clear_cookies.assert_not_awaited()
+    assert all(call.args == (page.url,) for call in context.cookies.call_args_list)

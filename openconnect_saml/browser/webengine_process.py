@@ -1,6 +1,5 @@
 import asyncio
 import contextlib
-import json
 import multiprocessing
 import signal
 import sys
@@ -34,6 +33,7 @@ except ImportError:  # pragma: no cover - depends on Qt build
     _HAS_WEBAUTHN_UX = False
 
 from openconnect_saml import config
+from openconnect_saml.browser.autofill import get_selectors
 
 app = None
 profile = None
@@ -469,30 +469,3 @@ class WebPopupWindow(QWidget):
 
 def to_str(qval):
     return bytes(qval).decode()
-
-
-def get_selectors(rules, credentials):
-    statements = []
-    for rule in rules:
-        selector = json.dumps(rule.selector)
-        if rule.action == "stop":
-            statements.append(
-                f"""var elem = document.querySelector({selector}); if (elem) {{ return; }}"""
-            )
-        elif rule.fill:
-            value = json.dumps(getattr(credentials, rule.fill, None))
-            if value:
-                statements.append(
-                    f"""var elem = document.querySelector({selector}); if (elem) {{ elem.dispatchEvent(new Event("focus")); elem.value = {value}; elem.dispatchEvent(new Event("change", {{bubbles: true}})); elem.dispatchEvent(new Event("input", {{bubbles: true}})); elem.dispatchEvent(new Event("blur")); }}"""
-                )
-            else:
-                logger.warning(
-                    "Credential info not available",
-                    type=rule.fill,
-                    possibilities=dir(credentials),
-                )
-        elif rule.action == "click":
-            statements.append(
-                f"""var elem = document.querySelector({selector}); if (elem) {{ elem.dispatchEvent(new Event("focus")); elem.click(); }}"""
-            )
-    return "\n".join(statements)

@@ -1,0 +1,21 @@
+# Example for ~/.config/openconnect-saml/usc-manual.toml.
+# Merge these settings into an existing file rather than replacing it blindly.
+# All top-level settings must be before [table] headers.
+username_only = true
+preserve_session = true
+preserve_session_on_interrupt = true
+token_cache = true
+chrome_channel = "chrome"
+chrome_user_data_dir = "~/.local/share/openconnect-saml/usc-chrome"
+connection_history = false
+
+[profiles.usc]
+server = "https://vpn.usc.edu"
+browser = "chrome"
+# Check `command -v vpn-slice` and adjust the absolute path if needed.
+# CLI arguments after -- replace this list. TUI uses the saved list.
+openconnect_args = ["--protocol=anyconnect", "--script", "/opt/homebrew/bin/vpn-slice 10.137.0.0/16"]
+
+[profiles.usc.credentials]
+username = "YOUR_USC_NETID"
+totp_source = "none"

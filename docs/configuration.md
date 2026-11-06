@@ -56,9 +56,25 @@ Current registered migrations:
 ## TOML structure
 
 ```toml
+# Behaviour flags
+notifications = false
+connection_history = true
+token_cache = true
+username_only = false
+preserve_session = false
+preserve_session_on_interrupt = false
+on_connect = ""
+on_disconnect = ""
+timeout = 30
+window_width = 800
+window_height = 600
+
+# Marks the most recently connected profile (set automatically)
+active_profile = "work"
+
 # Default profile picked when no name / --profile is given
 [default_profile]
-server = "vpn.example.com"
+address = "vpn.example.com"
 user_group = ""
 name = "My VPN"
 
@@ -105,22 +121,67 @@ allow_lan = false
 ipv6 = true
 dns_servers = ["1.1.1.1", "9.9.9.9"]
 
-# Behaviour flags
-notifications = false
-connection_history = true
-on_connect = ""
-on_disconnect = ""
-timeout = 30
-window_width = 800
-window_height = 600
-
-# Marks the most recently connected profile (set automatically)
-active_profile = "work"
 ```
 
 See [authentication.md](authentication.md) for full TOTP-provider
 config details and [networking.md](networking.md) for kill-switch
 options.
+
+## Saved username, session policy, and Chrome settings
+
+For USC, see the complete [example config](../examples/usc-manual.toml)
+and [launcher](../examples/connect_usc.sh) on the `feat/usc-vpn-adaptation`
+branch; see the [branch setup instructions](../examples/README.md).
+Merge the relevant settings into
+`~/.config/openconnect-saml/usc-manual.toml`; all top-level keys must come
+before any `[table]` headers.
+
+```toml
+username_only = true
+preserve_session = true
+preserve_session_on_interrupt = true
+chrome_channel = "chrome"
+chrome_user_data_dir = "~/.local/share/openconnect-saml/usc-chrome"
+
+[profiles.usc]
+server = "https://vpn.usc.edu"
+browser = "chrome"
+openconnect_args = ["--protocol=anyconnect", "--script", "/opt/homebrew/bin/vpn-slice 10.137.0.0/16"]
+
+[profiles.usc.credentials]
+username = "YOUR_USC_NETID"
+totp_source = "none"
+```
+
+Use your actual NetID and confirm the executable path with `command -v vpn-slice`.
+An existing legacy config can instead use `[credentials]` for the username;
+there is no need to repeat `--user` after saving it.
+
+| Setting | Effect |
+|---|---|
+| `username_only` | Fill the saved username and leave password/MFA to the browser; no terminal password/TOTP prompts. |
+| `preserve_session` | Default for `disconnect`, including TUI disconnect; use SIGHUP without logout. |
+| `preserve_session_on_interrupt` | During a foreground tunnel, translate Ctrl-C to SIGHUP without logout. |
+| `chrome_channel` | Select installed Chrome/Edge, including when launched through TUI. |
+| `chrome_user_data_dir` | Reuse a dedicated Chrome profile and its installed extensions. |
+
+The first three support per-profile overrides in `[profiles.usc]` as well as
+top-level defaults. Explicit `false` in a profile overrides a top-level `true`.
+The session record remembers its effective `preserve_session` policy, so
+`disconnect usc` honors it even when the connection used a custom `--config`.
+
+To explicitly log out once, use `disconnect usc --logout`. To keep the config
+but use normal Ctrl-C logout for one connection, pass
+`--no-preserve-session-on-interrupt`. CLI overrides do not rewrite saved policy.
+
+Preservation requires SIGHUP (macOS/Linux). The Ctrl-C supervisor uses sudo
+rather than doas (or `--no-sudo`) and validates sudo credentials before moving
+OpenConnect into a separate process group. Browser login cancellation retains
+its normal behavior. Server-side expiration and revocation still apply.
+
+A saved profile's `openconnect_args` is used by CLI, GUI, and TUI connections.
+An explicitly supplied CLI argument list after `--` replaces the saved list.
+Keep the `--script` executable absolute, since sudo may use a different PATH.
 
 ## Auto-fill rules
 
