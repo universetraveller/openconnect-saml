@@ -14,6 +14,10 @@ from openconnect_saml import config_cmd
 @pytest.fixture
 def tmp_config_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    # pyxdg caches these at import time; changing only the environment still
+    # searches the real home directory and makes tests depend on local files.
+    monkeypatch.setattr(config_cmd.xdg.BaseDirectory, "xdg_config_home", str(tmp_path))
+    monkeypatch.setattr(config_cmd.xdg.BaseDirectory, "xdg_config_dirs", [str(tmp_path)])
     cfg_dir = tmp_path / "openconnect-saml"
     cfg_dir.mkdir()
     yield cfg_dir
@@ -331,3 +335,17 @@ class TestHandler:
 
         rc = config_cmd.handle_config_command(Args())
         assert rc == 1
+
+
+def test_session_policy_booleans_are_visible_but_cookies_are_redacted():
+    data = {
+        "token_cache": True,
+        "preserve_session": True,
+        "preserve_session_on_interrupt": True,
+        "session_token": "secret-cookie",
+    }
+    redacted = config_cmd._redact(data)
+    assert redacted["token_cache"] is True
+    assert redacted["preserve_session"] is True
+    assert redacted["preserve_session_on_interrupt"] is True
+    assert redacted["session_token"] == "***"

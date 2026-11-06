@@ -55,6 +55,16 @@ openconnect-saml --server vpn.example.com --headless --user user@example.com
 
 ## Features
 
+- **Session reuse** — save VPN cookies in the OS keyring and retry through
+  SSO when the gateway rejects them. A dedicated persistent Chrome profile
+  retains cookies and extensions; `--username-only` lets your browser's
+  password manager handle the password. See
+  [session reuse and Apple Passwords setup](docs/browsers.md#reusing-vpn-sessions).
+- **Saved login and disconnect policies** — remember usernames, select
+  browser-managed password entry, and opt into session preservation on
+  disconnect or Ctrl-C. Profiles can save extra OpenConnect arguments for
+  CLI and TUI use. See [configuration](docs/configuration.md#saved-username-session-policy-and-chrome-settings)
+  and the [manual testing guide](docs/manual-testing.md).
 - **Three browser backends** — Qt6 WebEngine, Chromium via Playwright,
   or full headless. Hardware-key WebAuthn works in `--browser chrome`
   out of the box. With `--chrome-channel chrome|msedge` Playwright

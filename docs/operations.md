@@ -42,6 +42,9 @@ openconnect-saml sessions list --json   # machine-readable
 # Stop one
 openconnect-saml disconnect lab
 
+# Stop without logging the server session out (macOS/Linux; cookie may be reused)
+openconnect-saml disconnect lab --preserve-session
+
 # Stop everything
 openconnect-saml disconnect --all
 ```
@@ -50,6 +53,19 @@ openconnect-saml disconnect --all
 supervisor process until a tunnel interface (`tun*` / `utun*`)
 appears, useful for scripts that depend on the tunnel being up before
 the next step.
+
+Detached mode leaves the VPN tunnel running after the launcher exits. It is
+different from disconnecting without logout. By default, Ctrl-C and ordinary `disconnect`
+log the VPN session out; `disconnect --preserve-session` uses SIGHUP to close
+the tunnel while allowing reuse of the cached cookie until the server expires
+or revokes it. For a normal foreground connection, run the disconnect command
+from another terminal, using `default` for a connection without a named profile.
+
+To save this policy, set `preserve_session = true` for `disconnect` and
+`preserve_session_on_interrupt = true` for Ctrl-C in your config. They also
+support per-profile overrides. Use `disconnect PROFILE --logout` to log out
+explicitly or `--no-preserve-session-on-interrupt` for one connection's normal
+Ctrl-C logout behavior. Preservation is subject to gateway expiry/revocation.
 
 ### Profile groups
 

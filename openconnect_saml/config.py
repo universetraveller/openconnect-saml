@@ -133,7 +133,11 @@ def get_default_auto_fill_rules():
     return {
         "https://*": [
             AutoFillRule(selector="div[id=passwordError]", action="stop").as_dict(),
-            AutoFillRule(selector="input[type=email]", fill="username").as_dict(),
+            AutoFillRule(
+                selector="input[type=email], input[autocomplete=username], "
+                "input[name=username], input[name=j_username], input[id=username]",
+                fill="username",
+            ).as_dict(),
             AutoFillRule(selector="input[name=passwd]", fill="password").as_dict(),
             AutoFillRule(
                 selector="input[data-report-event=Signin_Submit]", action="click"
@@ -403,10 +407,14 @@ class ProfileConfig(ConfigNode):
     keepassxc = attr.ib(default=None, converter=_convert_keepassxc)
     routes = attr.ib(factory=list, converter=_convert_str_list)
     no_routes = attr.ib(factory=list, converter=_convert_str_list)
+    openconnect_args = attr.ib(factory=list, converter=_convert_str_list)
 
     # Per-profile overrides (v0.11.0+). All optional; ``None`` means
     # "fall back to the top-level config / CLI default".
     browser = attr.ib(default=None, converter=_convert_optional_str)
+    username_only = attr.ib(default=None, converter=_convert_optional_bool)
+    preserve_session = attr.ib(default=None, converter=_convert_optional_bool)
+    preserve_session_on_interrupt = attr.ib(default=None, converter=_convert_optional_bool)
     notify = attr.ib(default=None, converter=_convert_optional_bool)
     on_connect = attr.ib(default=None, converter=_convert_optional_str)
     on_disconnect = attr.ib(default=None, converter=_convert_optional_str)
@@ -431,6 +439,9 @@ class ProfileConfig(ConfigNode):
         # Drop optional overrides that are explicitly None to keep TOML clean
         for key in (
             "browser",
+            "username_only",
+            "preserve_session",
+            "preserve_session_on_interrupt",
             "notify",
             "on_connect",
             "on_disconnect",
@@ -491,6 +502,12 @@ class Config(ConfigNode):
     active_profile = attr.ib(default=None)
     notifications = attr.ib(default=False, converter=bool)
     connection_history = attr.ib(default=True, converter=bool)
+    token_cache = attr.ib(default=True, converter=bool)
+    username_only = attr.ib(default=False, converter=bool)
+    preserve_session = attr.ib(default=False, converter=bool)
+    preserve_session_on_interrupt = attr.ib(default=False, converter=bool)
+    chrome_channel = attr.ib(default=None, converter=_convert_optional_str)
+    chrome_user_data_dir = attr.ib(default=None, converter=_convert_optional_str)
     kill_switch = attr.ib(default=None, converter=_convert_killswitch)
 
     @classmethod
@@ -506,6 +523,12 @@ class Config(ConfigNode):
     def get_profile(self, name):
         """Get a named profile, or None."""
         return self.profiles.get(name)
+
+    def get_setting(self, setting, profile_name=None):
+        """Resolve an optional profile override before the top-level setting."""
+        profile = self.get_profile(profile_name) if profile_name else None
+        override = getattr(profile, setting, None)
+        return override if override is not None else getattr(self, setting)
 
     def add_profile(self, name, profile):
         """Add or update a named profile."""

@@ -39,7 +39,8 @@ openconnect-saml profiles remove lab
 
 `profiles set FIELD VALUE` accepts: `server`, `user_group`, `name`,
 `browser`, `notify`, `on_connect`, `on_disconnect`, `cert`, `cert_key`,
-`username`, `totp_source`, `auth_script`. Booleans accept
+`username`, `totp_source`, `auth_script`, `username_only`, `preserve_session`,
+`preserve_session_on_interrupt`. Booleans accept
 `true | false | yes | no | 1 | 0 | on | off`. An empty string clears
 an optional / per-profile-override field.
 
@@ -214,3 +215,20 @@ reports "No migrations needed".
 `active_profile` in the config file marks the most recently connected
 profile (set automatically on successful connect). It's used by the
 `status` command to label live connections.
+
+## Saved connection arguments and login policies
+
+Profiles can override `username_only`, `preserve_session`, and
+`preserve_session_on_interrupt` independently of the top-level defaults.
+An explicit `false` overrides a top-level `true`.
+
+```bash
+openconnect-saml profiles set work username_only true
+openconnect-saml profiles set work preserve_session true
+openconnect-saml profiles set work preserve_session_on_interrupt true
+```
+
+Use an `openconnect_args` TOML list in the profile for arguments that should
+also apply to TUI/GUI launches, for example `openconnect_args = ["--protocol=anyconnect"]`.
+An explicit CLI argument list after `--` replaces the saved list. See
+[configuration](configuration.md#saved-username-session-policy-and-chrome-settings).

@@ -28,6 +28,8 @@ covers each topic in depth.
 - **[Diagnostics](diagnostics.md)** — `doctor` subcommand, common
   error fixes, exit codes.
 - **[CLI reference](cli-reference.md)** — every flag and subcommand.
+- **[Manual testing](manual-testing.md)** — session reuse, browser persistence,
+  disconnect policies, and platform validation before submitting changes.
 - **[Development](development.md)** — contributor setup, project
   layout, release flow.
 - **[Migration](migration.md)** — from `openconnect-sso`,
