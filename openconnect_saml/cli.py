@@ -595,7 +595,7 @@ def create_argparser():
         help=(
             "Field to set: server, user_group, name, browser, notify, "
             "on_connect, on_disconnect, cert, cert_key, username, totp_source, "
-            "auth_script"
+            "auth_script, username_only, preserve_session, preserve_session_on_interrupt"
         ),
     )
     set_parser.add_argument(

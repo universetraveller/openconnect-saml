@@ -1,0 +1,17 @@
+# Generic browser-managed SSO example; replace the fictional gateway/account.
+# These are explicit choices for this example, not new global defaults.
+token_cache = true
+username_only = true
+preserve_session = true
+preserve_session_on_interrupt = true
+chrome_channel = "chrome"
+chrome_user_data_dir = "~/.local/share/openconnect-saml/work-chrome"
+
+[profiles.work]
+server = "https://vpn.example.com"
+browser = "chrome"
+openconnect_args = ["--protocol=anyconnect"]
+
+[profiles.work.credentials]
+username = "user@example.com"
+totp_source = "none"

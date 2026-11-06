@@ -54,17 +54,17 @@ def response(cookie="new-cookie"):
 
 def test_key_isolates_endpoint_account_group_and_profile():
     host = config.HostProfile("vpn.example.com", "", "")
-    key = token_cache.cache_key(host, "alice", "usc")
-    assert key != token_cache.cache_key(host, "bob", "usc")
+    key = token_cache.cache_key(host, "alice", "work")
+    assert key != token_cache.cache_key(host, "bob", "work")
     assert key != token_cache.cache_key(host, "alice", "other")
     assert key != token_cache.cache_key(
-        config.HostProfile("other.example.com", "", ""), "alice", "usc"
+        config.HostProfile("other.example.com", "", ""), "alice", "work"
     )
     assert key != token_cache.cache_key(
-        config.HostProfile("vpn.example.com", "group", ""), "alice", "usc"
+        config.HostProfile("vpn.example.com", "group", ""), "alice", "work"
     )
     assert key != token_cache.cache_key(
-        config.HostProfile("vpn.example.com", "", "group"), "alice", "usc"
+        config.HostProfile("vpn.example.com", "", "group"), "alice", "work"
     )
 
 
@@ -235,13 +235,13 @@ def test_redirected_gateway_is_reused_but_refresh_starts_at_requested_gateway(va
 
     async def login(target, *a, **kw):
         seen.append(target.vpn_url)
-        target.address = "https://node.example.com/usc"
+        target.address = "https://node.example.com/group"
         return response()
 
     with patch.object(app, "authenticate_to", AsyncMock(side_effect=login)) as authenticate:
         asyncio.run(app._run(options, cfg))
         cached, target = asyncio.run(app._run(options, cfg))
-        assert target.vpn_url == "https://node.example.com/usc"
+        assert target.vpn_url == "https://node.example.com/group"
         assert cfg.default_profile.vpn_url == "https://vpn.example.com"
         assert authenticate.await_count == 1
         with (
@@ -250,7 +250,7 @@ def test_redirected_gateway_is_reused_but_refresh_starts_at_requested_gateway(va
         ):
             assert app._connect_with_token_refresh(options, cfg, cached, target) == 0
     assert seen == ["https://vpn.example.com", "https://vpn.example.com"]
-    assert connect.call_args.args[1].vpn_url == "https://node.example.com/usc"
+    assert connect.call_args.args[1].vpn_url == "https://node.example.com/group"
 
 
 def test_disabled_cache_does_not_delete_existing_entry_on_cookie_rejection(vault):

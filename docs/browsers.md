@@ -138,8 +138,7 @@ rejection from its background process. Kill-switch connections also authenticate
 fresh before enabling the firewall, since the firewall would block IdP/Duo
 access during a later browser refresh.
 
-A server's “14 days” message does not guarantee a cookie will remain reusable
-for 14 days: the VPN and the identity provider can expire or revoke sessions
+A displayed authentication expiry is an upper bound, not a guarantee of reuse: the VPN and the identity provider can expire or revoke sessions
 independently. More specifically, **by default Ctrl-C and ordinary `disconnect` log the
 VPN session out**, so the saved cookie can no longer reconnect that session.
 Keeping an invalidated cookie on disk does not restore a logged-out session.
@@ -154,7 +153,7 @@ openconnect-saml disconnect default --preserve-session
 ```
 
 This sends SIGHUP rather than SIGTERM. The tunnel closes and network cleanup
-runs, but OpenConnect does not send a logout. USC can still expire or revoke
+runs, but OpenConnect does not send a logout. The gateway can still expire or revoke
 the session. This does not background a running VPN: `--detach` keeps a
 tunnel running in the background, whereas SIGHUP closes it while retaining
 the server session. See [OpenConnect's signal documentation](https://www.infradead.org/openconnect/manual.html#heading5).
@@ -175,7 +174,8 @@ The Ctrl-C supervisor keeps OpenConnect in a separate process group so a
 terminal SIGINT cannot log the VPN session out before the wrapper sends SIGHUP.
 It waits for OpenConnect to exit and run network cleanup. This path uses sudo
 (or `--no-sudo`) on macOS/Linux; defaults remain unchanged when it is disabled.
-See the [USC example](../examples/README.md) for the existing launcher and TUI.
+See [configuration](configuration.md#saved-username-session-policy-and-chrome-settings)
+for saved profiles and [manual testing](manual-testing.md) for validation steps.
 
 ## Persistent Chrome profile and Apple Passwords on macOS
 
@@ -183,10 +183,10 @@ Use a dedicated profile to retain SSO/Duo cookies, site storage, browser
 preferences, and installed extensions between runs:
 
 ```bash
-openconnect-saml --server YOUR_USC_VPN_HOST --browser chrome \
+openconnect-saml --server vpn.example.com --browser chrome \
   --chrome-channel chrome \
-  --chrome-user-data-dir "$HOME/.local/share/openconnect-saml/usc-chrome" \
-  --user YOUR_USC_NETID --username-only
+  --chrome-user-data-dir "$HOME/.local/share/openconnect-saml/work-chrome" \
+  --user user@example.com --username-only
 ```
 
 `--username-only` fills the username without reading saved passwords/TOTP or
@@ -197,14 +197,13 @@ complete Duo normally. In Chrome this mode leaves form submission and MFA
 choices to you, avoiding submission of an incomplete username/password form.
 **`--user` alone keeps the original terminal password prompt** if no password
 is saved; after that, browser authentication still opens. Browser storage may
-also remember the username if
-the identity provider supports that behavior.
+also remember the username if the identity provider supports that behavior.
 
 Persist the following at the **top level**, before any `[table]` headers in
 your existing `config.toml`:
 
 ```toml
-chrome_user_data_dir = "~/.local/share/openconnect-saml/usc-chrome"
+chrome_user_data_dir = "~/.local/share/openconnect-saml/work-chrome"
 username_only = true
 chrome_channel = "chrome"
 ```
@@ -219,7 +218,7 @@ same dedicated profile manually first:
 
 ```bash
 open -na "Google Chrome" --args \
-  --user-data-dir="$HOME/.local/share/openconnect-saml/usc-chrome"
+  --user-data-dir="$HOME/.local/share/openconnect-saml/work-chrome"
 ```
 
 Install Apple's **iCloud Passwords** extension there (Passwords app →
@@ -265,7 +264,7 @@ require a separate token-return mechanism (for example a compatible gateway
 callback or a Safari extension), beyond selecting a browser executable.
 OpenConnect has an `--external-browser` option for gateways that explicitly
 support `single-sign-on-external-browser`; this repository currently requests
-the different `single-sign-on-v2` flow, and USC support for the external-browser
-flow has not been verified. Merely opening the current login URL in Safari
+the different `single-sign-on-v2` flow. Support for the external-browser
+flow must be verified for the target gateway. Merely opening the current login URL in Safari
 does not return its cookie to this application.
 See [Apple's Safari WebDriver documentation](https://developer.apple.com/documentation/webkit/about-webdriver-for-safari).

@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Keyring-backed VPN session reuse with a single browser SSO refresh after a
+  cached cookie is rejected. Redirected gateway URLs and certificate pins are
+  retained with the cookie; auth-only, detached, and kill-switch modes use fresh
+  authentication.
+- Dedicated persistent Chrome profiles via `--chrome-user-data-dir`, retaining
+  SSO state and installed extensions while using the normal OS credential store.
+- Saved username-only browser login, Chrome channel/profile settings, per-profile
+  login/disconnect policies, and additional OpenConnect arguments for CLI/TUI use.
+- Opt-in disconnect and Ctrl-C session preservation on macOS/Linux, with explicit
+  logout overrides and network cleanup before the supervisor exits.
+- Generic configuration examples and a manual reliability-testing guide.
+
+### Fixed
+
+- Qt autofill no longer inserts absent credentials or overwrites manually entered
+  values; username-only mode leaves form submission and MFA choices to the user.
+- TUI disconnect targets the recorded VPN process and retains its saved policy,
+  including when launched with a custom config file or a different selected row.
+- Config display keeps non-secret boolean policies visible while redacting cookies.
+- Config-command tests isolate pyxdg's cached paths from the user's home directory.
+
 ## [0.25.0] – 2026-05-26
 
 ### Security

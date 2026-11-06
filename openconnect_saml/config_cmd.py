@@ -71,7 +71,10 @@ def _should_redact(key: str) -> bool:
 def _redact(data):
     """Recursively redact secret values in a nested structure."""
     if isinstance(data, dict):
-        return {k: ("***" if _should_redact(k) and v else _redact(v)) for k, v in data.items()}
+        return {
+            k: ("***" if _should_redact(k) and v and not isinstance(v, bool) else _redact(v))
+            for k, v in data.items()
+        }
     if isinstance(data, list):
         return [_redact(v) for v in data]
     return data

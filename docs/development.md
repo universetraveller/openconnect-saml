@@ -41,7 +41,10 @@ uv run pytest --cov=openconnect_saml           # with coverage
 ```
 
 CI runs on Ubuntu (Python 3.10–3.13) and Windows (3.12). Coverage
-gate: ≥ 50 % (`pyproject.toml` → `[tool.coverage.report]`).
+gate: ≥ 73 % (`pyproject.toml` → `[tool.coverage.report]`).
+
+See [manual testing](manual-testing.md) for the gateway/browser reliability
+checks and for what the automated suite does and does not verify.
 
 ## Project layout
 

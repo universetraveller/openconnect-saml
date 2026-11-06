@@ -1,6 +1,8 @@
 """Saved policies across CLI, connection supervision, and TUI launch/disconnect."""
 
 import asyncio
+import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -20,10 +22,10 @@ def configured():
             "preserve_session_on_interrupt": True,
             "chrome_channel": "chrome",
             "profiles": {
-                "usc": {
-                    "server": "https://vpn.usc.edu",
+                "work": {
+                    "server": "https://vpn.example.com",
                     "browser": "chrome",
-                    "openconnect_args": ["--script", "/opt/homebrew/bin/vpn-slice 10.137.0.0/16"],
+                    "openconnect_args": ["--script", "/usr/local/libexec/example-vpnc-script"],
                 }
             },
         }
@@ -32,39 +34,41 @@ def configured():
 
 def test_saved_policy_roundtrip_and_explicit_false_overrides():
     cfg = configured()
-    cfg.get_profile("usc").preserve_session = False
-    cfg.get_profile("usc").preserve_session_on_interrupt = False
-    cfg.get_profile("usc").username_only = False
+    cfg.get_profile("work").preserve_session = False
+    cfg.get_profile("work").preserve_session_on_interrupt = False
+    cfg.get_profile("work").username_only = False
     restored = config.Config.from_dict(toml.loads(toml.dumps(cfg.as_dict())))
     for field in ("preserve_session", "preserve_session_on_interrupt", "username_only"):
         assert restored.get_setting(field) is True
-        assert restored.get_setting(field, "usc") is False
+        assert restored.get_setting(field, "work") is False
     assert restored.chrome_channel == "chrome"
-    assert restored.get_profile("usc").openconnect_args == cfg.get_profile("usc").openconnect_args
+    assert restored.get_profile("work").openconnect_args == cfg.get_profile("work").openconnect_args
 
 
 def test_example_configuration_loads():
-    example = Path(__file__).parents[1] / "examples" / "usc-manual.toml"
+    example = Path(__file__).parents[1] / "examples" / "session-reuse.toml"
     cfg = config.Config.from_dict(toml.load(example))
-    assert cfg.get_setting("preserve_session_on_interrupt", "usc") is True
-    assert cfg.get_setting("username_only", "usc") is True
-    assert cfg.get_profile("usc").credentials.username == "YOUR_USC_NETID"
+    assert cfg.get_setting("preserve_session_on_interrupt", "work") is True
+    assert cfg.get_setting("username_only", "work") is True
+    assert cfg.get_profile("work").credentials.username == "user@example.com"
 
 
-@pytest.mark.skipif(__import__("os").name != "posix", reason="Preserving sessions uses SIGHUP")
+@pytest.mark.skipif(os.name != "posix", reason="Preserving sessions uses SIGHUP")
 @pytest.mark.parametrize("cli_override, expected", [(None, True), (False, False), (True, True)])
 def test_disconnect_honors_connection_policy_even_without_original_config(cli_override, expected):
     # This connection was launched with a different --config file. Its policy
     # travels in non-secret session metadata, not in the current default config.
-    active = sessions.Session(profile="usc", server="vpn.usc.edu", pid=999, preserve_session=True)
-    options = SimpleNamespace(profile_name="usc", all=False, preserve_session=cli_override)
+    active = sessions.Session(
+        profile="work", server="vpn.example.com", pid=999, preserve_session=True
+    )
+    options = SimpleNamespace(profile_name="work", all=False, preserve_session=cli_override)
     with (
         patch("openconnect_saml.cli.config.load", return_value=config.Config()),
         patch("openconnect_saml.sessions.load", return_value=active),
         patch("openconnect_saml.sessions.kill", return_value=True) as stop,
     ):
         assert _handle_disconnect_command(options) == 0
-    stop.assert_called_once_with("usc", **({"preserve_session": True} if expected else {}))
+    stop.assert_called_once_with("work", **({"preserve_session": True} if expected else {}))
 
 
 @pytest.mark.parametrize("interrupt_override", [None, False])
@@ -74,24 +78,22 @@ def test_connection_resolves_saved_arguments_and_records_disconnect_policy(
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     cfg = configured()
     options = SimpleNamespace(
-        profile_name="usc",
+        profile_name="work",
         proxy=None,
         ac_version="version",
         openconnect_args=[],
         user=None,
         preserve_session_on_interrupt=interrupt_override,
     )
-    host = config.HostProfile("vpn.usc.edu", "", "")
+    host = config.HostProfile("vpn.example.com", "", "")
     with patch("openconnect_saml.app.run_openconnect", return_value=0) as run:
         assert app._connect_with_token_refresh(options, cfg, MagicMock(), host) == 0
-    assert run.call_args.args[4] == cfg.get_profile("usc").openconnect_args
+    assert run.call_args.args[4] == cfg.get_profile("work").openconnect_args
     assert run.call_args.kwargs["preserve_session_on_interrupt"] is (
         interrupt_override is not False
     )
     run.call_args.kwargs["on_pid"](1234)
-    recorded = sessions.Session.from_dict(
-        __import__("json").loads(sessions.session_file("usc").read_text())
-    )
+    recorded = sessions.Session.from_dict(json.loads(sessions.session_file("work").read_text()))
     assert recorded.preserve_session is True
     assert recorded.pid == 1234
     # Explicit CLI OpenConnect arguments replace the saved list.
@@ -103,11 +105,11 @@ def test_connection_resolves_saved_arguments_and_records_disconnect_policy(
 
 def test_saved_username_and_system_chrome_need_no_repeated_flags():
     cfg = configured()
-    cfg.credentials = config.Credentials("remembered-netid")
+    cfg.credentials = config.Credentials("remembered-user")
     options = SimpleNamespace(
-        profile_name="usc",
+        profile_name="work",
         user=None,
-        server="vpn.usc.edu",
+        server="vpn.example.com",
         use_profile_selector=False,
         usergroup="",
         authgroup="",
@@ -125,7 +127,7 @@ def test_saved_username_and_system_chrome_need_no_repeated_flags():
     ):
         asyncio.run(app._run(options, cfg))
     prompt.assert_not_called()
-    assert auth.call_args.args[2].username == "remembered-netid"
+    assert auth.call_args.args[2].username == "remembered-user"
     assert auth.call_args.args[2].username_only is True
     assert auth.call_args.kwargs["chrome_channel"] == "chrome"
 
@@ -147,5 +149,5 @@ def test_tui_disconnects_managed_profile_instead_of_terminating_supervisor():
         return_value=SimpleNamespace(returncode=0),
     ) as stop:
         tui._disconnect()
-    assert stop.call_args.args[0][-2:] == ["disconnect", "usc"]
+    assert stop.call_args.args[0][-2:] == ["disconnect", "work"]
     child.terminate.assert_not_called()

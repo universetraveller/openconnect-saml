@@ -129,31 +129,28 @@ options.
 
 ## Saved username, session policy, and Chrome settings
 
-For USC, see the complete [example config](../examples/usc-manual.toml)
-and [launcher](../examples/connect_usc.sh) on the `feat/usc-vpn-adaptation`
-branch; see the [branch setup instructions](../examples/README.md).
-Merge the relevant settings into
-`~/.config/openconnect-saml/usc-manual.toml`; all top-level keys must come
-before any `[table]` headers.
+The following example uses a fictional gateway and account. Top-level keys
+must come before any `[table]` headers. Session preservation is an explicit
+opt-in; both preservation settings default to `false`.
 
 ```toml
 username_only = true
 preserve_session = true
 preserve_session_on_interrupt = true
 chrome_channel = "chrome"
-chrome_user_data_dir = "~/.local/share/openconnect-saml/usc-chrome"
+chrome_user_data_dir = "~/.local/share/openconnect-saml/work-chrome"
 
-[profiles.usc]
-server = "https://vpn.usc.edu"
+[profiles.work]
+server = "https://vpn.example.com"
 browser = "chrome"
-openconnect_args = ["--protocol=anyconnect", "--script", "/opt/homebrew/bin/vpn-slice 10.137.0.0/16"]
+openconnect_args = ["--protocol=anyconnect"]
 
-[profiles.usc.credentials]
-username = "YOUR_USC_NETID"
+[profiles.work.credentials]
+username = "user@example.com"
 totp_source = "none"
 ```
 
-Use your actual NetID and confirm the executable path with `command -v vpn-slice`.
+Replace the gateway and username with your own values.
 An existing legacy config can instead use `[credentials]` for the username;
 there is no need to repeat `--user` after saving it.
 
@@ -165,12 +162,12 @@ there is no need to repeat `--user` after saving it.
 | `chrome_channel` | Select installed Chrome/Edge, including when launched through TUI. |
 | `chrome_user_data_dir` | Reuse a dedicated Chrome profile and its installed extensions. |
 
-The first three support per-profile overrides in `[profiles.usc]` as well as
+The first three support per-profile overrides in `[profiles.work]` as well as
 top-level defaults. Explicit `false` in a profile overrides a top-level `true`.
 The session record remembers its effective `preserve_session` policy, so
-`disconnect usc` honors it even when the connection used a custom `--config`.
+`disconnect work` honors it even when the connection used a custom `--config`.
 
-To explicitly log out once, use `disconnect usc --logout`. To keep the config
+To explicitly log out once, use `disconnect work --logout`. To keep the config
 but use normal Ctrl-C logout for one connection, pass
 `--no-preserve-session-on-interrupt`. CLI overrides do not rewrite saved policy.
 
@@ -181,7 +178,9 @@ its normal behavior. Server-side expiration and revocation still apply.
 
 A saved profile's `openconnect_args` is used by CLI, GUI, and TUI connections.
 An explicitly supplied CLI argument list after `--` replaces the saved list.
-Keep the `--script` executable absolute, since sudo may use a different PATH.
+If the list includes `--script`, use an absolute executable path because sudo
+may use a different PATH. See [manual testing](manual-testing.md) for the
+expected behavior of cache reuse, refresh, and disconnect policies.
 
 ## Auto-fill rules
 

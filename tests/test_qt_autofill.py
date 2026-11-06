@@ -14,7 +14,7 @@ from openconnect_saml.config import AutoFillRule
 @pytest.mark.skipif(
     shutil.which("node") is None, reason="Node needed to execute generated JavaScript"
 )
-@pytest.mark.parametrize("username", ["netid", 'user"; throw new Error("injected"); //'])
+@pytest.mark.parametrize("username", ["username", 'user"; throw new Error("injected"); //'])
 def test_username_only_preserves_manual_fields_and_does_not_submit(username):
     rules = [
         AutoFillRule("user", fill="username"),

@@ -220,7 +220,8 @@ openconnect-saml profiles migrate [--apply]
 **`profiles set NAME FIELD VALUE`** — programmatic field editor. Allowed
 fields: `server`, `user_group`, `name`, `browser`, `notify`, `on_connect`,
 `on_disconnect`, `cert`, `cert_key`, `username`, `totp_source`,
-`auth_script`. Booleans accept `true|false|yes|no|1|0`. Empty string
+`auth_script`, `username_only`, `preserve_session`, `preserve_session_on_interrupt`.
+Booleans accept `true|false|yes|no|1|0`. Empty string
 clears optional fields.
 
 **`profiles copy SRC DST`** duplicates an existing profile. The copy is
