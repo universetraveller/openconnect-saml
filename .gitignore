@@ -11,6 +11,8 @@ build/
 .coverage
 htmlcov/
 .venv/
+# Private configuration, browser profiles, and runtime state for this checkout
+/.local/
 *.so
 .uv/
 uv.lock

@@ -21,6 +21,45 @@ TOTP from your password manager.
 Maintained fork of [`vlaci/openconnect-sso`](https://github.com/vlaci/openconnect-sso),
 combining work from [`kowyo/openconnect-lite`](https://github.com/kowyo/openconnect-lite).
 
+## USC checkout (macOS/Linux)
+
+The shareable [launcher template](connect_usc.sh.template) is kept in this
+repository for syncing through Git. Create or update the executable next to
+this checkout with:
+
+```bash
+install -m 755 connect_usc.sh.template ../connect_usc.sh
+```
+
+Repeat that command after pulling changes to the template. Then use the launcher:
+
+```bash
+../connect_usc.sh --forget-token     # fresh VPN authentication
+../connect_usc.sh                    # connect using a saved token when valid
+../connect_usc.sh --reconnect        # reconnect automatically if the tunnel drops
+../connect_usc.sh --detach --wait 30  # connect in the background; wait up to 30s
+../connect_usc.sh status             # connection status
+../connect_usc.sh sessions list      # tracked VPN processes
+../connect_usc.sh disconnect         # stop this checkout's VPN; keep session reusable
+../connect_usc.sh disconnect --logout # stop and log out
+../connect_usc.sh install            # refresh the tool after changing/pulling code
+```
+
+The launcher selects the `usc` profile automatically. Ctrl-C stops a foreground
+connection while retaining its reusable session when caching is enabled.
+
+The first run uses `uv tool install '.[chrome]'`, with its environment in
+`.local/tools/` and executable in `.local/bin/`. It asks for your USC NetID if no
+local config exists. Only the Chrome extra is installed; the launcher uses system
+Chrome without downloading another browser. `uv`, Chrome, OpenConnect, and
+`vpn-slice` must already be installed. Configuration, Chrome profile, runtime
+state, and download caches stay under the ignored `.local/` directory. VPN
+cookies use the OS keyring. Connection history is disabled, matching the original
+launcher. Login uses the saved username and browser password/MFA entry.
+The USC profile saves `vpn-slice 10.137.0.0/16` as its OpenConnect routing script.
+Edit `.local/config/openconnect-saml/config.toml` for different subnets or routing
+options. Existing configs retain their saved OpenConnect arguments.
+
 ## Install
 
 ```bash

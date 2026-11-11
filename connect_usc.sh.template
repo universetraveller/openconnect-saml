@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/openconnect-saml" && pwd)"
+cd -- "$project_dir"
+
+export OPENCONNECT_SAML_CONFIG="$project_dir/.local/config/openconnect-saml/config.toml"
+export XDG_CONFIG_HOME="$project_dir/.local/config"
+export XDG_DATA_HOME="$project_dir/.local/share"
+export XDG_STATE_HOME="$project_dir/.local/state"
+export XDG_CACHE_HOME="$project_dir/.local/cache"
+export TMPDIR="$project_dir/.local/tmp"
+export UV_CACHE_DIR="$XDG_CACHE_HOME/uv"
+export UV_TOOL_DIR="$project_dir/.local/tools"
+export UV_TOOL_BIN_DIR="$project_dir/.local/bin"
+export UV_PYTHON_INSTALL_DIR="$XDG_DATA_HOME/uv/python"
+export UV_PYTHON_DOWNLOADS=never
+export PLAYWRIGHT_BROWSERS_PATH="$project_dir/.local/browsers"
+export PYTHONDONTWRITEBYTECODE=1
+export PATH="$UV_TOOL_BIN_DIR:$PATH"
+mkdir -p "$project_dir/.local" "$TMPDIR"
+
+if [[ "${1:-}" == "install" ]]; then
+    uv tool install --force --reinstall-package openconnect-saml --no-managed-python '.[chrome]'
+    exit 0
+fi
+
+if [[ ! -x "$UV_TOOL_BIN_DIR/openconnect-saml" ]]; then
+    uv tool install --no-managed-python '.[chrome]'
+fi
+
+if [[ ! -f "$OPENCONNECT_SAML_CONFIG" ]]; then
+    read -r -p "USC NetID: " usc_netid
+    if [[ -z "$usc_netid" ]]; then
+        printf 'A USC NetID is required.\n' >&2
+        exit 1
+    fi
+    vpn_slice="$(command -v vpn-slice || true)"
+    if [[ -z "$vpn_slice" ]]; then
+        printf 'vpn-slice is required for USC split routing. Install it with: brew install vpn-slice\n' >&2
+        exit 1
+    fi
+    USC_NETID="$usc_netid" USC_VPN_SLICE="$vpn_slice" "$UV_TOOL_DIR/openconnect-saml/bin/python" - <<'PY'
+import os
+import shlex
+
+from openconnect_saml import config
+
+cfg = config.Config.from_dict({
+    "active_profile": "usc",
+    "username_only": True,
+    "connection_history": False,
+    "chrome_channel": "chrome",
+    "chrome_user_data_dir": ".local/chrome",
+    "profiles": {
+        "usc": {
+            "server": "https://vpn.usc.edu",
+            "browser": "chrome",
+            "credentials": {"username": os.environ["USC_NETID"], "totp_source": "none"},
+            "openconnect_args": [
+                "--protocol=anyconnect",
+                "--script",
+                shlex.join([os.environ["USC_VPN_SLICE"], "10.137.0.0/16"]),
+            ],
+        },
+    },
+})
+config.save(cfg)
+if not config.config_path().is_file():
+    raise SystemExit("Could not save the local USC configuration")
+PY
+fi
+
+case "${1:-}" in
+    connect|disconnect)
+        usc_command="$1"
+        shift
+        set -- "$usc_command" usc "$@"
+        ;;
+    status|sessions|config|doctor)
+        ;;
+    *)
+        set -- connect usc "$@"
+        ;;
+esac
+
+exec "$UV_TOOL_BIN_DIR/openconnect-saml" "$@"
